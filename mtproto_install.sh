@@ -2,6 +2,7 @@
 
 # ============================================
 # MTProto Proxy — автоматическая установка
+# Официальный образ: telegrammessenger/proxy
 # Для Ubuntu/Debian VPS
 # ============================================
 
@@ -39,12 +40,6 @@ else
   echo -e "${GREEN}  ✓ Docker установлен${NC}"
 fi
 
-# Проверяю xxd (нужен для генерации секрета)
-if ! command -v xxd &> /dev/null; then
-  echo -e "${YELLOW}  → Устанавливаю xxd...${NC}"
-  apt-get install -y -qq xxd 2>/dev/null || apt-get install -y -qq vim-common 2>/dev/null || true
-fi
-
 # ---- 3. Выбор порта ----
 echo -e "${YELLOW}[2/5] Ищу свободный порт...${NC}"
 
@@ -60,7 +55,6 @@ for port in "${PREFERRED_PORTS[@]}"; do
 done
 
 if [ -z "$CHOSEN_PORT" ]; then
-  # Если все предпочтительные заняты — берём случайный
   CHOSEN_PORT=$(shuf -i 10000-60000 -n 1)
   while ss -tlnp | grep -q ":${CHOSEN_PORT} "; do
     CHOSEN_PORT=$(shuf -i 10000-60000 -n 1)
@@ -75,7 +69,7 @@ ss -tlnp | grep LISTEN | awk '{print "    " $4}' | sed 's/.*:/    порт /'
 
 # ---- 4. Генерация секрета ----
 echo -e "${YELLOW}[3/5] Генерирую секрет...${NC}"
-SECRET=$(head -c 16 /dev/urandom | xxd -ps)
+SECRET=$(head -c 16 /dev/urandom | xxd -ps 2>/dev/null || openssl rand -hex 16)
 echo -e "${GREEN}  ✓ Секрет сгенерирован${NC}"
 
 # ---- 5. Удаление старого контейнера если есть ----
@@ -83,27 +77,26 @@ if docker ps -a --format '{{.Names}}' | grep -q "^mtproto-proxy$"; then
   echo -e "${YELLOW}  → Удаляю старый контейнер mtproto-proxy...${NC}"
   docker stop mtproto-proxy 2>/dev/null || true
   docker rm mtproto-proxy 2>/dev/null || true
+  docker volume rm proxy-config 2>/dev/null || true
 fi
 
 # ---- 6. Запуск контейнера ----
 echo -e "${YELLOW}[4/5] Запускаю MTProto Proxy...${NC}"
 
-TLS_DOMAIN="www.google.com"
-
+# Официальный образ от Telegram
+# SECRET с префиксом dd = secure mode (рекомендуется)
 docker run -d \
   --name mtproto-proxy \
   --restart=always \
-  -p ${CHOSEN_PORT}:${CHOSEN_PORT} \
-  -v mtproto-data:/data \
-  seriyps/mtproto_proxy \
-  -p ${CHOSEN_PORT} \
-  -s ${SECRET} \
-  -t 1 \
-  --tls-domain ${TLS_DOMAIN}
+  -p ${CHOSEN_PORT}:443 \
+  -v proxy-config:/data \
+  -e SECRET=dd${SECRET} \
+  -e PORT=443 \
+  telegrammessenger/proxy:latest
 
-# Ждём запуска
-echo -e "${YELLOW}  → Жду запуска контейнера...${NC}"
-sleep 5
+# Ждём запуска (образ при первом старте скачивает конфиг от Telegram)
+echo -e "${YELLOW}  → Жду запуска контейнера (первый старт ~15 сек)...${NC}"
+sleep 15
 
 # Проверяю что контейнер работает
 if docker ps --format '{{.Names}}' | grep -q "^mtproto-proxy$"; then
@@ -125,9 +118,8 @@ if [ -z "$SERVER_IP" ]; then
 fi
 
 # ---- 8. Формирование ссылки ----
-# Fake-TLS секрет: ee + hex(secret) + hex(domain)
-TLS_DOMAIN_HEX=$(echo -n ${TLS_DOMAIN} | xxd -ps)
-FULL_SECRET="ee${SECRET}${TLS_DOMAIN_HEX}"
+# dd-секрет = secure mode
+FULL_SECRET="dd${SECRET}"
 
 TG_LINK="https://t.me/proxy?server=${SERVER_IP}&port=${CHOSEN_PORT}&secret=${FULL_SECRET}"
 
@@ -140,18 +132,19 @@ fi
 # ---- РЕЗУЛЬТАТ ----
 echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║        ✅ MTProto Proxy установлен!       ║${NC}"
+echo -e "${CYAN}║      ✅ MTProto Proxy установлен!         ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
 echo ""
+echo -e "${GREEN}  Образ:   telegrammessenger/proxy (официальный)${NC}"
 echo -e "${GREEN}  Сервер:  ${SERVER_IP}${NC}"
 echo -e "${GREEN}  Порт:    ${CHOSEN_PORT}${NC}"
-echo -e "${GREEN}  Домен:   ${TLS_DOMAIN} (fake-TLS)${NC}"
+echo -e "${GREEN}  Режим:   Secure (dd-secret)${NC}"
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════${NC}"
 echo -e "${YELLOW}  📋 ССЫЛКА ДЛЯ TELEGRAM (скопируй):${NC}"
 echo -e "${CYAN}══════════════════════════════════════════${NC}"
 echo ""
-echo -e "${GREEN}${TG_LINK}${NC}"
+echo "${TG_LINK}"
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════${NC}"
 echo ""
