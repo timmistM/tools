@@ -123,18 +123,16 @@ if [ -z "$SERVER_IP" ]; then
 fi
 
 # ---- 8. Получение ссылки из логов контейнера ----
-# Контейнер сам генерирует ссылку с правильным секретом
-TG_LINK=$(docker logs mtproto-proxy 2>&1 | grep "https://t.me/proxy" | head -1 | tr -d '[:space:]')
+# Контейнер выдаёт ссылку в логах, извлекаем только URL
+TG_LINK=$(docker logs mtproto-proxy 2>&1 | grep -oP 'https://t\.me/proxy\?[^\s]+' | head -1)
 
 # Если контейнер не выдал ссылку — собираем вручную
 if [ -z "$TG_LINK" ]; then
   TG_LINK="https://t.me/proxy?server=${SERVER_IP}&port=${CHOSEN_PORT}&secret=dd${SECRET}"
 fi
 
-# Заменяем IP в ссылке на реальный внешний (контейнер может определить неправильно)
-TG_LINK=$(echo "$TG_LINK" | sed "s/server=[^&]*/server=${SERVER_IP}/")
-# Заменяем порт на реальный внешний
-TG_LINK=$(echo "$TG_LINK" | sed "s/port=[^&]*/port=${CHOSEN_PORT}/")
+# Заменяем IP и порт на реальные внешние
+TG_LINK=$(echo "$TG_LINK" | sed "s/server=[^&]*/server=${SERVER_IP}/" | sed "s/port=[^&]*/port=${CHOSEN_PORT}/")
 
 # ---- 9. Настройка firewall ----
 if command -v ufw &> /dev/null; then
